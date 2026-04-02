@@ -7,9 +7,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.TextView;
-import android.widget.Toast;
 
-import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.Preview;
@@ -18,22 +16,14 @@ import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.google.android.gms.tasks.Task;
-import com.google.android.gms.tasks.Tasks;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mlkit.common.model.DownloadConditions;
 import com.google.mlkit.common.model.LocalModel;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.label.ImageLabel;
 import com.google.mlkit.vision.label.ImageLabeler;
 import com.google.mlkit.vision.label.ImageLabeling;
 import com.google.mlkit.vision.label.custom.CustomImageLabelerOptions;
-import com.google.mlkit.nl.translate.TranslateLanguage;
-import com.google.mlkit.nl.translate.Translation;
-import com.google.mlkit.nl.translate.Translator;
-import com.google.mlkit.nl.translate.TranslatorOptions;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
@@ -50,9 +40,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView resultTextView;
     private Button identifyButton;
     private ImageLabeler labeler;
-    private Translator translator;
     private ExecutorService cameraExecutor;
-    private boolean isTranslatorReady = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -64,7 +52,6 @@ public class MainActivity extends AppCompatActivity {
         identifyButton = findViewById(R.id.identifyButton);
 
         initLabeler();
-        initTranslator();
 
         if (allPermissionsGranted()) {
             startCamera();
@@ -74,6 +61,8 @@ public class MainActivity extends AppCompatActivity {
 
         identifyButton.setOnClickListener(v -> identifyPlant());
         cameraExecutor = Executors.newSingleThreadExecutor();
+        
+        resultTextView.setText("Наведите камеру на растение");
     }
 
     private void initLabeler() {
@@ -91,34 +80,6 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "Ошибка модели", e);
         }
-    }
-
-    private void initTranslator() {
-        TranslatorOptions options = new TranslatorOptions.Builder()
-                .setSourceLanguage(TranslateLanguage.ENGLISH)
-                .setTargetLanguage(TranslateLanguage.RUSSIAN)
-                .build();
-        translator = Translation.getClient(options);
-
-        // УБРАЛИ требование Wi-Fi, теперь можно качать через любой интернет
-        DownloadConditions conditions = new DownloadConditions.Builder()
-                .build();
-
-        resultTextView.setText("⏳ Загрузка переводчика (нужен интернет)...");
-        identifyButton.setEnabled(false);
-
-        translator.downloadModelIfNeeded(conditions)
-                .addOnSuccessListener(unused -> {
-                    isTranslatorReady = true;
-                    identifyButton.setEnabled(true);
-                    resultTextView.setText("Наведите камеру на растение");
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Ошибка загрузки переводчика", e);
-                    resultTextView.setText("Ошибка загрузки. Проверьте интернет и нажмите кнопку Начать заново (перезапустите приложение)");
-                    // Позволим кнопке работать, если перевод не удался (будет на англ)
-                    identifyButton.setEnabled(true);
-                });
     }
 
     private void startCamera() {
@@ -150,15 +111,10 @@ public class MainActivity extends AppCompatActivity {
                 .addOnSuccessListener(labels -> {
                     if (labels.isEmpty()) {
                         resultTextView.setText("Растение не определено");
-                        identifyButton.setEnabled(true);
-                        return;
-                    }
-
-                    if (isTranslatorReady) {
-                        translateResults(labels);
                     } else {
-                        showEnglishResults(labels);
+                        showResults(labels);
                     }
+                    identifyButton.setEnabled(true);
                 })
                 .addOnFailureListener(e -> {
                     resultTextView.setText("Ошибка анализа");
@@ -166,37 +122,14 @@ public class MainActivity extends AppCompatActivity {
                 });
     }
 
-    private void translateResults(List<ImageLabel> labels) {
-        List<Task<String>> translationTasks = new ArrayList<>();
-        for (ImageLabel label : labels) {
-            translationTasks.add(translator.translate(label.getText()));
-        }
-
-        Tasks.whenAllSuccess(translationTasks).addOnSuccessListener(translatedList -> {
-            StringBuilder sb = new StringBuilder();
-            sb.append("Результаты (RU):\n");
-            for (int i = 0; i < translatedList.size(); i++) {
-                String translated = (String) translatedList.get(i);
-                float confidence = labels.get(i).getConfidence();
-                sb.append("🌿 ").append(translated)
-                        .append(String.format(Locale.US, " (%.0f%%)\n", confidence * 100));
-            }
-            resultTextView.setText(sb.toString());
-            identifyButton.setEnabled(true);
-        }).addOnFailureListener(e -> {
-            showEnglishResults(labels);
-        });
-    }
-
-    private void showEnglishResults(List<ImageLabel> labels) {
+    private void showResults(List<ImageLabel> labels) {
         StringBuilder sb = new StringBuilder();
-        sb.append("Результаты (EN - перевод не готов):\n");
+        sb.append("Результаты:\n");
         for (ImageLabel label : labels) {
             sb.append("🌿 ").append(label.getText())
                     .append(String.format(Locale.US, " (%.0f%%)\n", label.getConfidence() * 100));
         }
         resultTextView.setText(sb.toString());
-        identifyButton.setEnabled(true);
     }
 
     private boolean allPermissionsGranted() {
@@ -209,7 +142,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (translator != null) translator.close();
         cameraExecutor.shutdown();
     }
 }
